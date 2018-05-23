@@ -2,21 +2,26 @@ import Event from './event.js';
 import OpusWorkerBin from './opus.min.worker'
 
 export default class OpusWorker extends Event {
-    constructor(channels) {
+    constructor(channels, config) {
         super('worker');
         this.worker = new OpusWorkerBin();
         this.worker.addEventListener('message', this.onMessage.bind(this));
-        this.worker.postMessage({
-            type: 'init',
-            config: {
-                rate:24000,
-                channels:channels
-            }
-        });
+        this.config = Object.assign({
+          rate: 24000,
+          channels:channels
+        }, config, {rate: config.sampleRate});
+
+        let message = {
+          type: 'init',
+          config: this.config
+        };
+        this.sampleRate = this.config.rate;
+        console.warn('Opus worker with rate', this.sampleRate);
+        this.worker.postMessage(JSON.parse(JSON.stringify(message)));
     }
 
     getSampleRate() {
-        return 24000;
+        return this.sampleRate;
     }
 
     decode(packet) {

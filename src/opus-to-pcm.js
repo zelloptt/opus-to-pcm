@@ -17,7 +17,7 @@ export class OpusToPCM extends Event {
         if (nativeSupport) {
             this.decoder = new Ogg(options.channels); 
         } else if(options.fallback) {
-            this.decoder = new OpusWorker(options.channels);
+            this.decoder = new OpusWorker(options.channels, options);
         } else {
             this.decoder = null;
         }
