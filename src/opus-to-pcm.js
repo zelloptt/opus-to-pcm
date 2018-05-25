@@ -23,7 +23,10 @@ export class OpusToPCM extends Event {
         }
 
         if (this.decoder) {
-            this.decoder.on('data', this.onData.bind(this));
+            this.decoder.on('data', (data) => {
+              this.dispatch('decode', data);
+              this.ondata(data);
+            });
         }
     }
 
@@ -31,9 +34,7 @@ export class OpusToPCM extends Event {
         return this.decoder.getSampleRate();
     }
 
-    onData(data) {
-        this.dispatch('decode', data);
-    }
+    ondata() {}
 
     decode(packet) {
         if (!this.decoder) {

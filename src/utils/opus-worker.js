@@ -16,7 +16,6 @@ export default class OpusWorker extends Event {
           config: this.config
         };
         this.sampleRate = this.config.rate;
-        console.warn('Opus worker with rate', this.sampleRate);
         this.worker.postMessage(JSON.parse(JSON.stringify(message)));
     }
 
