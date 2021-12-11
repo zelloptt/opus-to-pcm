@@ -35,12 +35,22 @@ export default class OpusWorker extends Event {
         let data = event.data;
         this.dispatch('data', data.buffer);
     }
-    destroy() {
+
+    destroy(callback) {
         this.worker.postMessage({
             type: 'destroy'
         });
-        this.worker.terminate();
-        this.worker = null;
-        this.offAll();
+        // Ideally we could receive a message from the worker
+        // telling us that it's completed processing the "destroy"
+        // command, but until that is possible, this is a reasonable
+        // workaround.
+        setTimeout(() => {
+            this.worker.terminate();
+            this.worker = null;
+            this.offAll();
+            if (callback) {
+                callback();
+            }
+        }, 100); // ms
     }
 }

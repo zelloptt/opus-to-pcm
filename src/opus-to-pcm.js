@@ -43,8 +43,8 @@ export class OpusToPCM extends Event {
         this.decoder.decode(packet);
     }
 
-    destroy() {
-        this.decoder.destroy();
+    destroy(callback) {
+        this.decoder.destroy(callback);
         this.offAll();
     }
 }
