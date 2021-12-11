@@ -36,6 +36,10 @@ export default class OpusWorker extends Event {
         this.dispatch('data', data.buffer);
     }
     destroy() {
+        this.worker.postMessage({
+            type: 'destroy'
+        });
+        this.worker.terminate();
         this.worker = null;
         this.offAll();
     }
