@@ -47,7 +47,7 @@ export default class OpusWorker extends Event {
         setTimeout(() => {
             this.worker.terminate();
             this.worker = null;
-            this.offAll();
         }, 100); // ms
+        this.offAll();
     }
 }
