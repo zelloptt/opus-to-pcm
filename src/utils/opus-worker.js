@@ -36,7 +36,7 @@ export default class OpusWorker extends Event {
         this.dispatch('data', data.buffer);
     }
 
-    destroy(callback) {
+    destroy() {
         this.worker.postMessage({
             type: 'destroy'
         });
@@ -48,9 +48,6 @@ export default class OpusWorker extends Event {
             this.worker.terminate();
             this.worker = null;
             this.offAll();
-            if (callback) {
-                callback();
-            }
         }, 100); // ms
     }
 }
