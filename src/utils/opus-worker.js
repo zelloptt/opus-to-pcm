@@ -1,19 +1,29 @@
 import Event from './event.js';
-import OpusWorkerBin from './opus.min.worker'
+import OpusWorkerBin from './opus.min.worker';
 
 export default class OpusWorker extends Event {
     constructor(channels, config) {
         super('worker');
         this.worker = new OpusWorkerBin();
         this.worker.addEventListener('message', this.onMessage.bind(this));
+        this.worker.addEventListener('error', (event) => {
+            if (!event.message || !event.message.includes('corrupted stream')) {
+                return;
+            }
+            const handled = this.dispatch('corrupted_stream');
+            if (!handled) {
+                return;
+            }
+            event.preventDefault();
+        });
         this.config = Object.assign({
-          rate: 24000,
-          channels:channels
+            rate: 24000,
+            channels
         }, config, {rate: config.sampleRate});
 
         let message = {
-          type: 'init',
-          config: this.config
+            type: 'init',
+            config: this.config
         };
         this.sampleRate = this.config.rate;
         this.worker.postMessage(JSON.parse(JSON.stringify(message)));
