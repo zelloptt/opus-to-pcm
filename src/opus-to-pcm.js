@@ -1,4 +1,3 @@
-import { appendByteArray } from './utils/utils.js';
 import Event from './utils/event.js';
 import Ogg from './utils/ogg.js';
 import OpusWorker from './utils/opus-worker.js';
@@ -10,12 +9,13 @@ export class OpusToPCM extends Event {
         let nativeSupport = false;
         let defaults = {
             channels: 1,
-            fallback: true
+            fallback: true,
+            handleCorruptedStream: false
         };
         options = Object.assign({}, defaults, options);
 
         if (nativeSupport) {
-            this.decoder = new Ogg(options.channels); 
+            this.decoder = new Ogg(options.channels);
         } else if(options.fallback) {
             this.decoder = new OpusWorker(options.channels, options);
         } else {
@@ -24,8 +24,11 @@ export class OpusToPCM extends Event {
 
         if (this.decoder) {
             this.decoder.on('data', (data) => {
-              this.dispatch('decode', data);
-              this.ondata(data);
+                this.dispatch('decode', data);
+                this.ondata(data);
+            });
+            this.decoder.on('corrupted_stream', (data) => {
+                this.dispatch('corrupted_stream', data);
             });
         }
     }
@@ -38,7 +41,7 @@ export class OpusToPCM extends Event {
 
     decode(packet) {
         if (!this.decoder) {
-            throw ('opps! no decoder is found to decode');
+            throw ('oops! no decoder is found to decode');
         }
         this.decoder.decode(packet);
     }
