@@ -9,7 +9,8 @@ export class OpusToPCM extends Event {
         let nativeSupport = false;
         let defaults = {
             channels: 1,
-            fallback: true
+            fallback: true,
+            handleCorruptedStream: false
         };
         options = Object.assign({}, defaults, options);
 

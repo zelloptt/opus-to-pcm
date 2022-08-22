@@ -7,13 +7,10 @@ export default class OpusWorker extends Event {
         this.worker = new OpusWorkerBin();
         this.worker.addEventListener('message', this.onMessage.bind(this));
         this.worker.addEventListener('error', (event) => {
-            if (!event.message || !event.message.includes('corrupted stream')) {
+            if (!event.message || !event.message.includes('corrupted stream') || !this.config.handleCorruptedStream) {
                 return;
             }
-            const handled = this.dispatch('corrupted_stream');
-            if (!handled) {
-                return;
-            }
+            this.dispatch('corrupted_stream');
             event.preventDefault();
         });
         this.config = Object.assign({
