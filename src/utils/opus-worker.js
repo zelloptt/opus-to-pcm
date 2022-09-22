@@ -47,7 +47,6 @@ export default class OpusWorker extends Event {
         //   type: "RPC"
         // }
         if (data.type === 'RPC') {
-            console.error('Not a data message');
             return;
         }
         this.dispatch('data', data.buffer);
