@@ -40,6 +40,15 @@ export default class OpusWorker extends Event {
 
     onMessage(event) {
         let data = event.data;
+        // The first message from OpusWorkerBin does not contain a buffer in event.data
+        // Instead, it contains the following object:
+        // data: {
+        //   method: "ready",
+        //   type: "RPC"
+        // }
+        if (data.type === 'RPC') {
+            return;
+        }
         this.dispatch('data', data.buffer);
     }
 
