@@ -23,19 +23,23 @@ export default class OpusWorker extends Event {
             config: this.config
         };
         this.sampleRate = this.config.rate;
-        this.worker.postMessage(JSON.parse(JSON.stringify(message)));
+        this.worker.postMessage(message);
     }
 
     getSampleRate() {
         return this.sampleRate;
     }
 
+    // NOTE: This function transfers the memory ownership of the packet
+    // to a web worker.
     decode(packet) {
         let workerData = {
             type: 'decode',
             buffer: packet
         };
-        this.worker.postMessage(workerData);
+        // Passing the buffer with the transfer list prevents the browser
+        // from copying the bytes. Same physical memory, but now owned by the worker thread
+        this.worker.postMessage(workerData, [packet.buffer]);
     }
 
     onMessage(event) {

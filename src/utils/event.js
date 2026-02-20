@@ -1,7 +1,7 @@
 export default class Event {
     constructor(type) {
         this.listener = {};
-        this.type = type | '';
+        this.type = type || '';
     }
 
     on(event, fn) {
@@ -29,7 +29,7 @@ export default class Event {
 
     dispatch(event, data) {
         if (this.listener[event]) {
-            this.listener[event].map((each) => {
+            this.listener[event].forEach((each) => {
                 each.apply(null, [data]);
             });
             return true;
