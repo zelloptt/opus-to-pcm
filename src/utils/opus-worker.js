@@ -30,6 +30,8 @@ export default class OpusWorker extends Event {
         return this.sampleRate;
     }
 
+    // NOTE: This function transfers the memory ownership of the packet
+    // to a web worker.
     decode(packet) {
         let workerData = {
             type: 'decode',
