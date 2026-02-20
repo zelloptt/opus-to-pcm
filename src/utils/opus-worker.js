@@ -23,7 +23,7 @@ export default class OpusWorker extends Event {
             config: this.config
         };
         this.sampleRate = this.config.rate;
-        this.worker.postMessage(JSON.parse(JSON.stringify(message)));
+        this.worker.postMessage(message);
     }
 
     getSampleRate() {
@@ -35,7 +35,7 @@ export default class OpusWorker extends Event {
             type: 'decode',
             buffer: packet
         };
-        this.worker.postMessage(workerData);
+        this.worker.postMessage(workerData, [packet.buffer]);
     }
 
     onMessage(event) {
