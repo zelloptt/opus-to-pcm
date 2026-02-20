@@ -35,6 +35,8 @@ export default class OpusWorker extends Event {
             type: 'decode',
             buffer: packet
         };
+        // Passing the buffer with the transfer list prevents the browser
+        // from copying the bytes. Same physical memory, but now owned by the worker thread
         this.worker.postMessage(workerData, [packet.buffer]);
     }
 
