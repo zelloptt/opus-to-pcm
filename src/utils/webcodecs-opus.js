@@ -53,6 +53,13 @@ import Event from './event.js';
 
 const WEBCODECS_OPUS_RATE = 48000;
 
+// Maximum number of times we'll rebuild the underlying `AudioDecoder`
+// in response to errors before giving up on the stream. `AudioDecoder`
+// transitions to 'closed' on any decode error, so to match libopus's
+// forgiving behavior we rebuild and keep going. A small upper bound
+// prevents a pathological stream from spinning forever.
+const MAX_REBUILD_ATTEMPTS = 5;
+
 export default class WebCodecsOpus extends Event {
     constructor(channels, config) {
         super('webcodecs-opus');
@@ -67,21 +74,29 @@ export default class WebCodecsOpus extends Event {
         // A per-packet 60ms step is the upper bound on an Opus frame.
         this.nextTimestamp = 0;
         this.closed = false;
+        this.rebuildAttempts = 0;
+        this.decoder = this._buildDecoder();
+    }
 
-        this.decoder = new AudioDecoder({
-            output: this._onAudioData.bind(this),
-            error: this._onError.bind(this)
-        });
-
+    _buildDecoder() {
+        let dec;
         try {
-            this.decoder.configure({
+            dec = new AudioDecoder({
+                output: this._onAudioData.bind(this),
+                error: this._onError.bind(this)
+            });
+            dec.configure({
                 codec: 'opus',
                 sampleRate: WEBCODECS_OPUS_RATE,
                 numberOfChannels: this.channels
             });
         } catch (err) {
-            this._onError(err);
+            if (this.config.handleCorruptedStream) {
+                this.dispatch('corrupted_stream', err);
+            }
+            return null;
         }
+        return dec;
     }
 
     getSampleRate() {
@@ -125,6 +140,11 @@ export default class WebCodecsOpus extends Event {
                 return;
             }
 
+            // Reset the rebuild counter on any successful output so a
+            // rare corrupted frame early in a long stream doesn't burn
+            // through the rebuild budget for the rest of the session.
+            this.rebuildAttempts = 0;
+
             // Always pull planar f32 from WebCodecs: it's the one format
             // the spec requires implementations to support, and it makes
             // the subsequent resample step channel-agnostic.
@@ -147,7 +167,9 @@ export default class WebCodecsOpus extends Event {
                 interleaved = linearResampleInterleave(planes, numFrames, numChannels, srcRate, dstRate);
             }
 
-            this.dispatch('data', interleaved);
+            if (interleaved.length > 0) {
+                this.dispatch('data', interleaved);
+            }
         } catch (err) {
             this._onError(err);
         } finally {
@@ -159,19 +181,83 @@ export default class WebCodecsOpus extends Event {
         if (this.config.handleCorruptedStream) {
             this.dispatch('corrupted_stream', err);
         }
+        if (this.closed) {
+            return;
+        }
+        // Per WebCodecs, `AudioDecoder` transitions to 'closed' on any
+        // error, which would silently drop every subsequent packet of
+        // this stream. libopus by contrast tolerates bad frames and
+        // keeps decoding the rest. Rebuild the underlying decoder so
+        // the next `decode()` call can succeed. `nextTimestamp` stays
+        // monotonic across the rebuild, which is all WebCodecs requires.
+        if (this.rebuildAttempts >= MAX_REBUILD_ATTEMPTS) {
+            this.decoder = null;
+            return;
+        }
+        this.rebuildAttempts++;
+        const old = this.decoder;
+        this.decoder = null;
+        if (old) {
+            try {
+                if (old.state !== 'closed') {
+                    old.close();
+                }
+            } catch (_) {
+                // Decoder is already dead; ignore.
+            }
+        }
+        this.decoder = this._buildDecoder();
     }
 
     destroy() {
-        this.closed = true;
-        try {
-            if (this.decoder && this.decoder.state !== 'closed') {
-                this.decoder.close();
-            }
-        } catch (_) {
-            // Best-effort cleanup; ignore teardown errors.
+        if (this.closed) {
+            return;
         }
+        this.closed = true;
+        const dec = this.decoder;
         this.decoder = null;
-        this.offAll();
+        if (!dec) {
+            this.offAll();
+            return;
+        }
+        // Drain any in-flight decodes before tearing down. `AudioDecoder.
+        // decode()` is pipelined: the output callback for each chunk fires
+        // some microtasks after the decode was issued. Calling `close()`
+        // synchronously (as the initial implementation did) aborts the
+        // pipeline and silently drops whatever `AudioData` callbacks
+        // haven't fired yet, which for an end-of-message destroy meant
+        // losing the tail of the audio. Since `stopPlayback` in the SDK
+        // computes playback duration from packet count, the player would
+        // underrun at the end and sit "stuck" waiting for PCM that never
+        // arrived.
+        //
+        // `flush()` resolves once every queued decode has produced its
+        // output (or thrown). We keep the listener list live until then
+        // so the last few `dispatch('data', ...)` calls make it through
+        // to `IncomingMessage.ondata` and into the player. After flush
+        // resolves we actually close the decoder and tear down listeners.
+        const finalize = () => {
+            try {
+                if (dec.state !== 'closed') {
+                    dec.close();
+                }
+            } catch (_) {
+                // Best-effort cleanup.
+            }
+            this.offAll();
+        };
+        let flushed;
+        try {
+            flushed = dec.flush();
+        } catch (_) {
+            finalize();
+            return;
+        }
+        if (flushed && typeof flushed.then === 'function') {
+            flushed.then(finalize, finalize);
+        } else {
+            finalize();
+        }
     }
 }
 
