@@ -204,17 +204,31 @@ function interleave(planes, numFrames, numChannels) {
     return out;
 }
 
-// Integer-factor decimation. Opus output for voice is already effectively
-// band-limited by the encoder to well under the target Nyquist (e.g.
-// narrowband voice at 4 kHz into a 24 kHz stream has ~20 kHz of headroom),
-// so plain decimation is adequate without an additional anti-alias filter.
+// Integer-factor downsample via an N-sample block average (boxcar FIR
+// followed by decimation). This is the cheapest anti-alias filter that
+// still meaningfully outperforms plain "pick every Nth sample"
+// decimation, and requires no state across calls. For N=2 the boxcar
+// has its first null at the source Nyquist; for larger N the first null
+// is at srcRate/N which is exactly the target Nyquist. That's not a
+// brickwall, but it's adequate for voice at any of the Opus-supported
+// output rates (48k, 24k, 16k, 12k, 8k) and much better than naive
+// subsampling for wideband content squeezed into narrowband targets.
 function decimateInterleave(planes, numFrames, numChannels, decim) {
+    if (decim === 1) {
+        return interleave(planes, numFrames, numChannels);
+    }
     const outFrames = Math.floor(numFrames / decim);
     const out = new Float32Array(outFrames * numChannels);
+    const inv = 1 / decim;
     for (let i = 0; i < outFrames; i++) {
-        const srcIdx = i * decim;
+        const base = i * decim;
         for (let ch = 0; ch < numChannels; ch++) {
-            out[i * numChannels + ch] = planes[ch][srcIdx];
+            const plane = planes[ch];
+            let sum = 0;
+            for (let k = 0; k < decim; k++) {
+                sum += plane[base + k];
+            }
+            out[i * numChannels + ch] = sum * inv;
         }
     }
     return out;
