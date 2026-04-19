@@ -21,6 +21,27 @@ import Event from './event.js';
 // `AudioDecoder` is missing, `OpusToPCM` falls back to `OpusWorker` when
 // `fallback: true`.
 //
+// ## Sample-rate handling
+//
+// WebCodecs' Opus decoder in Chromium only accepts `sampleRate: 48000`
+// in `AudioDecoderConfig` and always emits 48 kHz `AudioData`, even
+// though libopus itself supports returning decoded audio at 8, 12, 16,
+// 24 or 48 kHz via `opus_decoder_create(Fs, ...)`. The Zello Channels
+// SDK, however, derives the downstream player's sample rate from the
+// codec header attached to each stream and passes it in as
+// `options.sampleRate` (24 kHz for narrow-/mediumband streams, 48 kHz
+// for wideband). If we just forwarded the raw 48 kHz samples the
+// `OpusWorker` replacement would play back at half speed / an octave
+// low whenever the session picked 24 kHz.
+//
+// To preserve drop-in behavior, we resample the WebCodecs output down
+// to `options.sampleRate` before emitting it and report that same rate
+// from `getSampleRate()`. For the 48 kHz case the resample is a no-op;
+// for 24 kHz (the common case) it's an exact 2:1 decimation. For any
+// other requested rate we fall back to linear interpolation, which is
+// more than adequate for 16-bit-equivalent voice content that has
+// already been band-limited by the encoder.
+//
 // Interface contract (matches `OpusWorker`/`Ogg`):
 //   - emits 'data'              with an interleaved Float32Array of PCM
 //   - emits 'corrupted_stream'  when a decode error is surfaced (only when
@@ -29,24 +50,21 @@ import Event from './event.js';
 //   - `decode(packet)`          accepts a Uint8Array/ArrayBuffer of one
 //                               Opus packet
 //   - `destroy()`               tears down the decoder
-//
-// Opus always decodes at 48 kHz. The decoder requests interleaved f32
-// output from `AudioData.copyTo` when the platform supports it and falls
-// back to copying per-plane and interleaving in JS otherwise.
 
-const OPUS_SAMPLE_RATE = 48000;
+const WEBCODECS_OPUS_RATE = 48000;
 
 export default class WebCodecsOpus extends Event {
     constructor(channels, config) {
         super('webcodecs-opus');
         this.channels = channels || 1;
         this.config = config || {};
-        this.sampleRate = OPUS_SAMPLE_RATE;
-        // Monotonically-increasing timestamp in microseconds. WebCodecs only
-        // requires input timestamps to be strictly increasing for ordering;
-        // the value itself is not inspected by us on the output side. A
-        // per-packet 60ms step is the maximum Opus frame duration and leaves
-        // headroom for any downstream consumer that does care.
+        // Target output rate. Matches the rate the Zello Channels SDK's
+        // player was configured with for this stream.
+        this.outputSampleRate = this.config.sampleRate || WEBCODECS_OPUS_RATE;
+        // Monotonically-increasing timestamp in microseconds. WebCodecs
+        // only requires input timestamps to be strictly increasing for
+        // ordering; the value is not inspected by us on the output side.
+        // A per-packet 60ms step is the upper bound on an Opus frame.
         this.nextTimestamp = 0;
         this.closed = false;
 
@@ -58,7 +76,7 @@ export default class WebCodecsOpus extends Event {
         try {
             this.decoder.configure({
                 codec: 'opus',
-                sampleRate: this.sampleRate,
+                sampleRate: WEBCODECS_OPUS_RATE,
                 numberOfChannels: this.channels
             });
         } catch (err) {
@@ -67,7 +85,7 @@ export default class WebCodecsOpus extends Event {
     }
 
     getSampleRate() {
-        return this.sampleRate;
+        return this.outputSampleRate;
     }
 
     decode(packet) {
@@ -90,7 +108,7 @@ export default class WebCodecsOpus extends Event {
             this._onError(err);
             return;
         }
-        this.nextTimestamp += 60000; // 60ms in us; upper bound on an Opus frame
+        this.nextTimestamp += 60000; // 60ms in us, upper bound on an Opus frame
 
         try {
             this.decoder.decode(chunk);
@@ -107,34 +125,26 @@ export default class WebCodecsOpus extends Event {
                 return;
             }
 
-            const interleaved = new Float32Array(numFrames * numChannels);
-
-            // Fast path: ask the UA for interleaved f32 directly.
-            let gotInterleaved = false;
-            if (numChannels === 1) {
-                try {
-                    audioData.copyTo(interleaved, {planeIndex: 0, format: 'f32'});
-                    gotInterleaved = true;
-                } catch (_) {
-                    // Fall through to planar copy.
-                }
-            } else {
-                try {
-                    audioData.copyTo(interleaved, {planeIndex: 0, format: 'f32'});
-                    gotInterleaved = true;
-                } catch (_) {
-                    // Not all implementations expose 'f32'; fall back to planar.
-                }
+            // Always pull planar f32 from WebCodecs: it's the one format
+            // the spec requires implementations to support, and it makes
+            // the subsequent resample step channel-agnostic.
+            const planes = new Array(numChannels);
+            for (let ch = 0; ch < numChannels; ch++) {
+                planes[ch] = new Float32Array(numFrames);
+                audioData.copyTo(planes[ch], {planeIndex: ch, format: 'f32-planar'});
             }
 
-            if (!gotInterleaved) {
-                for (let ch = 0; ch < numChannels; ch++) {
-                    const plane = new Float32Array(numFrames);
-                    audioData.copyTo(plane, {planeIndex: ch, format: 'f32-planar'});
-                    for (let i = 0; i < numFrames; i++) {
-                        interleaved[i * numChannels + ch] = plane[i];
-                    }
-                }
+            const srcRate = audioData.sampleRate || WEBCODECS_OPUS_RATE;
+            const dstRate = this.outputSampleRate;
+
+            let interleaved;
+            if (srcRate === dstRate) {
+                interleaved = interleave(planes, numFrames, numChannels);
+            } else if (srcRate % dstRate === 0) {
+                const decim = srcRate / dstRate;
+                interleaved = decimateInterleave(planes, numFrames, numChannels, decim);
+            } else {
+                interleaved = linearResampleInterleave(planes, numFrames, numChannels, srcRate, dstRate);
             }
 
             this.dispatch('data', interleaved);
@@ -179,4 +189,54 @@ function toUint8Array(packet) {
         return new Uint8Array(packet.buffer, packet.byteOffset, packet.byteLength);
     }
     return null;
+}
+
+function interleave(planes, numFrames, numChannels) {
+    if (numChannels === 1) {
+        return planes[0];
+    }
+    const out = new Float32Array(numFrames * numChannels);
+    for (let i = 0; i < numFrames; i++) {
+        for (let ch = 0; ch < numChannels; ch++) {
+            out[i * numChannels + ch] = planes[ch][i];
+        }
+    }
+    return out;
+}
+
+// Integer-factor decimation. Opus output for voice is already effectively
+// band-limited by the encoder to well under the target Nyquist (e.g.
+// narrowband voice at 4 kHz into a 24 kHz stream has ~20 kHz of headroom),
+// so plain decimation is adequate without an additional anti-alias filter.
+function decimateInterleave(planes, numFrames, numChannels, decim) {
+    const outFrames = Math.floor(numFrames / decim);
+    const out = new Float32Array(outFrames * numChannels);
+    for (let i = 0; i < outFrames; i++) {
+        const srcIdx = i * decim;
+        for (let ch = 0; ch < numChannels; ch++) {
+            out[i * numChannels + ch] = planes[ch][srcIdx];
+        }
+    }
+    return out;
+}
+
+// Fallback resampler for non-integer ratios. Linear interpolation is fine
+// for speech bandwidths; anyone shipping music through this path should
+// bring their own resampler.
+function linearResampleInterleave(planes, numFrames, numChannels, srcRate, dstRate) {
+    const outFrames = Math.floor(numFrames * dstRate / srcRate);
+    const out = new Float32Array(outFrames * numChannels);
+    const ratio = srcRate / dstRate;
+    for (let i = 0; i < outFrames; i++) {
+        const srcPos = i * ratio;
+        const i0 = Math.floor(srcPos);
+        const i1 = Math.min(i0 + 1, numFrames - 1);
+        const frac = srcPos - i0;
+        for (let ch = 0; ch < numChannels; ch++) {
+            const a = planes[ch][i0];
+            const b = planes[ch][i1];
+            out[i * numChannels + ch] = a + (b - a) * frac;
+        }
+    }
+    return out;
 }
