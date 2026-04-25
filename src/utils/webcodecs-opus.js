@@ -66,7 +66,10 @@ const MAX_REBUILD_ATTEMPTS = 5;
 // case where the audio process hangs or the promise never settles.
 // Without it, a stuck flush would retain this instance (and its event
 // listeners) for the lifetime of the page.
-const FLUSH_TIMEOUT_MS = 1000;
+//
+// Exported so the test suite can assert against the same value rather
+// than hardcoding it; not part of the public runtime API.
+export const FLUSH_TIMEOUT_MS = 1000;
 
 export default class WebCodecsOpus extends Event {
     constructor(channels, config) {
@@ -121,7 +124,7 @@ export default class WebCodecsOpus extends Event {
             if (old.state !== 'closed') {
                 old.close();
             }
-        } catch {
+        } catch (_) {
             // Decoder is already in an unrecoverable state; nothing to do.
         }
     }
@@ -141,7 +144,7 @@ export default class WebCodecsOpus extends Event {
     safeDispatch(event, data) {
         try {
             this.dispatch(event, data);
-        } catch {
+        } catch (_) {
             // Listener bug; not a decoder problem. Intentionally
             // swallowed so we don't tear down a healthy decoder over
             // a defect downstream.
@@ -302,7 +305,7 @@ export default class WebCodecsOpus extends Event {
                 if (dec.state !== 'closed') {
                     dec.close();
                 }
-            } catch {
+            } catch (_) {
                 // Decoder is already in an unrecoverable state; nothing to do.
             }
             this.offAll();
@@ -310,7 +313,7 @@ export default class WebCodecsOpus extends Event {
         let flushed;
         try {
             flushed = dec.flush();
-        } catch {
+        } catch (_) {
             // flush() rejects/throws if the decoder is already errored;
             // skip straight to teardown.
             finalize();
@@ -325,7 +328,12 @@ export default class WebCodecsOpus extends Event {
     }
 }
 
-function toUint8Array(packet) {
+// The helpers below are module-private in the runtime path but exported
+// (named) so the unit tests can exercise them directly. They are pure
+// functions over plain typed-arrays, with no dependency on WebCodecs,
+// the `Event` class, or browser globals.
+
+export function toUint8Array(packet) {
     if (!packet) {
         return null;
     }
@@ -341,7 +349,7 @@ function toUint8Array(packet) {
     return null;
 }
 
-function interleave(planes, numFrames, numChannels) {
+export function interleave(planes, numFrames, numChannels) {
     if (numChannels === 1) {
         return planes[0];
     }
@@ -363,7 +371,7 @@ function interleave(planes, numFrames, numChannels) {
 // brickwall, but it's adequate for voice at any of the Opus-supported
 // output rates (48k, 24k, 16k, 12k, 8k) and much better than naive
 // subsampling for wideband content squeezed into narrowband targets.
-function decimateInterleave(planes, numFrames, numChannels, decim) {
+export function decimateInterleave(planes, numFrames, numChannels, decim) {
     if (decim === 1) {
         return interleave(planes, numFrames, numChannels);
     }
@@ -387,7 +395,7 @@ function decimateInterleave(planes, numFrames, numChannels, decim) {
 // Fallback resampler for non-integer ratios. Linear interpolation is fine
 // for speech bandwidths; anyone shipping music through this path should
 // bring their own resampler.
-function linearResampleInterleave(planes, numFrames, numChannels, srcRate, dstRate) {
+export function linearResampleInterleave(planes, numFrames, numChannels, srcRate, dstRate) {
     const outFrames = Math.floor(numFrames * dstRate / srcRate);
     const out = new Float32Array(outFrames * numChannels);
     const ratio = srcRate / dstRate;
