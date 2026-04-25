@@ -13,20 +13,6 @@ export class OpusToPCM extends Event {
         };
         options = Object.assign({}, defaults, options);
 
-        // Opt-in native Opus decoding via the browser's WebCodecs
-        // `AudioDecoder`. Disabled by default; existing consumers that
-        // don't pass `useNative` keep the `OpusWorker` (libopus-in-worker)
-        // path they've always used.
-        //
-        // When `useNative: true` is requested but the environment can't
-        // provide the WebCodecs globals, fall through to the worker path
-        // iff `fallback: true` (the default). Chromium-based environments
-        // (Electron / Dispatch Hub) ship `AudioDecoder` and are required
-        // by spec to support `codec: 'opus'`. We also gate on
-        // `EncodedAudioChunk` because `WebCodecsOpus.decode()` constructs
-        // one per packet; an environment with `AudioDecoder` but no
-        // `EncodedAudioChunk` (e.g. behind a partial flag) would error
-        // on every packet otherwise.
         let nativeSupport = options.useNative &&
             typeof AudioDecoder !== 'undefined' &&
             typeof EncodedAudioChunk !== 'undefined';
