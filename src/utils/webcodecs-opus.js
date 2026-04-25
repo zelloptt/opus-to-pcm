@@ -60,6 +60,14 @@ const WEBCODECS_OPUS_RATE = 48000;
 // prevents a pathological stream from spinning forever.
 const MAX_REBUILD_ATTEMPTS = 5;
 
+// Backstop for the `flush()`-then-`close()` dance in `destroy()`. In
+// healthy operation `AudioDecoder.flush()` resolves in well under a
+// millisecond, so a one-second timeout is purely a safety net for the
+// case where the audio process hangs or the promise never settles.
+// Without it, a stuck flush would retain this instance (and its event
+// listeners) for the lifetime of the page.
+const FLUSH_TIMEOUT_MS = 1000;
+
 export default class WebCodecsOpus extends Event {
     constructor(channels, config) {
         super('webcodecs-opus');
@@ -92,15 +100,52 @@ export default class WebCodecsOpus extends Event {
             });
         } catch (err) {
             if (this.config.handleCorruptedStream) {
-                this.dispatch('corrupted_stream', err);
+                this.safeDispatch('corrupted_stream', err);
             }
             return null;
         }
         return dec;
     }
 
+    // Close and null `this.decoder` in a single safe step. Used by both
+    // the rebuild path and the budget-exhausted path so the underlying
+    // `AudioDecoder` is always explicitly released (rather than left
+    // for GC, which is unreliable for media-process resources).
+    closeDecoder() {
+        const old = this.decoder;
+        this.decoder = null;
+        if (!old) {
+            return;
+        }
+        try {
+            if (old.state !== 'closed') {
+                old.close();
+            }
+        } catch {
+            // Decoder is already in an unrecoverable state; nothing to do.
+        }
+    }
+
     getSampleRate() {
         return this.outputSampleRate;
+    }
+
+    // Wrapper around `Event.dispatch` that isolates listener exceptions
+    // from our internal lifecycle. Without this, a thrown error from a
+    // consumer's `'data'` handler (e.g. a bug deep in `player.feed`)
+    // would propagate back into `onAudioData`'s catch block, get
+    // misclassified as a decoder error, and burn through the rebuild
+    // budget. Same hazard for a throwing `'corrupted_stream'`
+    // listener, which would skip the rebuild entirely and leave the
+    // stream silently dead.
+    safeDispatch(event, data) {
+        try {
+            this.dispatch(event, data);
+        } catch {
+            // Listener bug; not a decoder problem. Intentionally
+            // swallowed so we don't tear down a healthy decoder over
+            // a defect downstream.
+        }
     }
 
     decode(packet) {
@@ -168,7 +213,7 @@ export default class WebCodecsOpus extends Event {
             }
 
             if (interleaved.length > 0) {
-                this.dispatch('data', interleaved);
+                this.safeDispatch('data', interleaved);
             }
         } catch (err) {
             this.onError(err);
@@ -179,7 +224,7 @@ export default class WebCodecsOpus extends Event {
 
     onError(err) {
         if (this.config.handleCorruptedStream) {
-            this.dispatch('corrupted_stream', err);
+            this.safeDispatch('corrupted_stream', err);
         }
         if (this.closed) {
             return;
@@ -191,21 +236,21 @@ export default class WebCodecsOpus extends Event {
         // the next `decode()` call can succeed. `nextTimestamp` stays
         // monotonic across the rebuild, which is all WebCodecs requires.
         if (this.rebuildAttempts >= MAX_REBUILD_ATTEMPTS) {
-            this.decoder = null;
+            // Close the most recently-built decoder before giving up;
+            // otherwise its underlying media-process resource is left
+            // for GC, which is unreliable. Subsequent `decode()` calls
+            // become silent no-ops because `this.decoder` is null.
+            this.closeDecoder();
+            // Surface a final terminal error so consumers aren't left
+            // wondering why the stream went silent.
+            if (this.config.handleCorruptedStream) {
+                this.safeDispatch('corrupted_stream',
+                    new Error('WebCodecs decoder rebuild budget exhausted'));
+            }
             return;
         }
         this.rebuildAttempts++;
-        const old = this.decoder;
-        this.decoder = null;
-        if (old) {
-            try {
-                if (old.state !== 'closed') {
-                    old.close();
-                }
-            } catch {
-                // Decoder is already in an unrecoverable state; nothing to do.
-            }
-        }
+        this.closeDecoder();
         this.decoder = this.buildDecoder();
     }
 
@@ -236,7 +281,23 @@ export default class WebCodecsOpus extends Event {
         // so the last few `dispatch('data', ...)` calls make it through
         // to `IncomingMessage.ondata` and into the player. After flush
         // resolves we actually close the decoder and tear down listeners.
+        //
+        // The flush is also bounded by `FLUSH_TIMEOUT_MS` so a stuck or
+        // never-settling flush promise (e.g. an audio process hang)
+        // can't retain this instance and its event listeners forever.
+        // Whichever of {flush settled, timeout fired} happens first
+        // wins; the other becomes a no-op via the `finalized` guard.
+        let finalized = false;
+        let timeoutHandle = null;
         const finalize = () => {
+            if (finalized) {
+                return;
+            }
+            finalized = true;
+            if (timeoutHandle !== null) {
+                clearTimeout(timeoutHandle);
+                timeoutHandle = null;
+            }
             try {
                 if (dec.state !== 'closed') {
                     dec.close();
@@ -256,6 +317,7 @@ export default class WebCodecsOpus extends Event {
             return;
         }
         if (flushed && typeof flushed.then === 'function') {
+            timeoutHandle = setTimeout(finalize, FLUSH_TIMEOUT_MS);
             flushed.then(finalize, finalize);
         } else {
             finalize();
