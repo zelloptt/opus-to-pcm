@@ -26,7 +26,7 @@ const HAS_ENCODER = typeof window.AudioEncoder !== 'undefined' &&
             // The whole point of the native path: this combo is
             // mandatory by spec on every WebCodecs implementation.
             // If a future Chromium build changes that, we want to
-            // know in CI rather than at runtime in Dispatch Hub.
+            // know in CI rather than at runtime.
             const dec = new WebCodecsOpus(1, {sampleRate: 48000});
             ok(dec.decoder, 'decoder constructed');
             equal(dec.decoder.state, 'configured');

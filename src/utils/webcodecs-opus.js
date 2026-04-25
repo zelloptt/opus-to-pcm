@@ -15,9 +15,8 @@ import Event from './event.js';
 //
 // It is enabled via `new OpusToPCM({ useNative: true })` and only when
 // `typeof AudioDecoder !== 'undefined'`. Opus is a required codec in the
-// WebCodecs spec, so in any Chromium-based environment (notably Electron,
-// which is where Dispatch Hub lives) `AudioDecoder` + `codec: 'opus'` is
-// guaranteed to be supported. For non-Chromium environments where
+// WebCodecs spec, so any user agent that exposes `AudioDecoder` is
+// required to support `codec: 'opus'`. In environments where
 // `AudioDecoder` is missing, `OpusToPCM` falls back to `OpusWorker` when
 // `fallback: true`.
 //
