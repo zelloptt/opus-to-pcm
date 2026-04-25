@@ -19,18 +19,35 @@ export class OpusToPCM extends Event {
         // path they've always used.
         //
         // When `useNative: true` is requested but the environment can't
-        // provide `AudioDecoder`, fall through to the worker path iff
-        // `fallback: true` (the default). Chromium-based environments
+        // provide the WebCodecs globals, fall through to the worker path
+        // iff `fallback: true` (the default). Chromium-based environments
         // (Electron / Dispatch Hub) ship `AudioDecoder` and are required
-        // by spec to support `codec: 'opus'`.
-        let nativeSupport = options.useNative && typeof AudioDecoder !== 'undefined';
+        // by spec to support `codec: 'opus'`. We also gate on
+        // `EncodedAudioChunk` because `WebCodecsOpus.decode()` constructs
+        // one per packet; an environment with `AudioDecoder` but no
+        // `EncodedAudioChunk` (e.g. behind a partial flag) would error
+        // on every packet otherwise.
+        let nativeSupport = options.useNative &&
+            typeof AudioDecoder !== 'undefined' &&
+            typeof EncodedAudioChunk !== 'undefined';
 
+        this.decoder = null;
         if (nativeSupport) {
-            this.decoder = new WebCodecsOpus(options.channels, options);
-        } else if (options.fallback) {
+            const native = new WebCodecsOpus(options.channels, options);
+            if (native.isSupported) {
+                this.decoder = native;
+            } else {
+                // WebCodecs claimed support at the global level but
+                // `AudioDecoder.configure()` rejected our config (e.g.
+                // a build that exposes the API but ships no opus
+                // decoder). Tear the dead instance down and fall
+                // through to the worker path under the same `fallback`
+                // policy as the no-native-at-all case.
+                native.destroy();
+            }
+        }
+        if (!this.decoder && options.fallback) {
             this.decoder = new OpusWorker(options.channels, options);
-        } else {
-            this.decoder = null;
         }
 
         if (this.decoder) {

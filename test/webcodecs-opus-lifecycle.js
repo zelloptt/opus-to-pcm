@@ -179,9 +179,33 @@ describe('WebCodecsOpus lifecycle --', function() {
             try {
                 const dec = new WebCodecsOpus(1, {sampleRate: 48000});
                 equal(dec.decoder, null);
+                // The partially-built AudioDecoder must be closed
+                // explicitly so its native handle isn't leaked to GC.
+                equal(fakes[0].closeCount, 1, 'partial decoder closed');
                 // decode() on a null decoder is a no-op (no throw).
                 dec.decode(new Uint8Array([1, 2, 3]));
                 dec.destroy();
+            } finally {
+                FakeAudioDecoder.prototype.configure = realConfigure;
+            }
+        });
+
+        it('reports isSupported correctly', function() {
+            // Used by OpusToPCM to decide whether to fall back to
+            // the worker path when WebCodecs claimed support at the
+            // global level but configure() rejected our config.
+            const ok_ = new WebCodecsOpus(1, {sampleRate: 48000});
+            equal(ok_.isSupported, true);
+            ok_.destroy();
+
+            const realConfigure = FakeAudioDecoder.prototype.configure;
+            FakeAudioDecoder.prototype.configure = function() {
+                throw new Error('not supported');
+            };
+            try {
+                const bad = new WebCodecsOpus(1, {sampleRate: 48000});
+                equal(bad.isSupported, false);
+                bad.destroy();
             } finally {
                 FakeAudioDecoder.prototype.configure = realConfigure;
             }

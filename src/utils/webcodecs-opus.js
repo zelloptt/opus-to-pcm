@@ -102,12 +102,34 @@ export default class WebCodecsOpus extends Event {
                 numberOfChannels: this.channels
             });
         } catch (err) {
+            // If `new AudioDecoder()` succeeded and `configure()` threw,
+            // we own a partially-constructed decoder whose underlying
+            // media-process resource would otherwise leak until GC.
+            // Release it explicitly, mirroring `closeDecoder()`.
+            if (dec) {
+                try {
+                    if (dec.state !== 'closed') {
+                        dec.close();
+                    }
+                } catch (_) {
+                    // Already in an unrecoverable state; nothing to do.
+                }
+            }
             if (this.config.handleCorruptedStream) {
                 this.safeDispatch('corrupted_stream', err);
             }
             return null;
         }
         return dec;
+    }
+
+    // Public-ish flag used by `OpusToPCM` to detect a `WebCodecsOpus`
+    // that failed to configure (e.g. an environment that exposes
+    // `AudioDecoder` but doesn't actually support `codec: 'opus'`).
+    // When false, the caller should treat this instance as unusable
+    // and either fall back or surface a hard failure.
+    get isSupported() {
+        return this.decoder !== null;
     }
 
     // Close and null `this.decoder` in a single safe step. Used by both

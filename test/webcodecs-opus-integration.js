@@ -145,6 +145,12 @@ const HAS_ENCODER = typeof window.AudioEncoder !== 'undefined' &&
             }
 
             encoder.flush().then(function() {
+                // Release the encoder's native resource as soon as we
+                // have all the chunks. WebCodecs encoders are not
+                // garbage-collected aggressively across Karma runs, so
+                // leaving them open across tests can exhaust the
+                // browser's media-process slots.
+                try { encoder.close(); } catch (_) {}
                 if (encodeError) {
                     return done(encodeError);
                 }
@@ -225,7 +231,10 @@ const HAS_ENCODER = typeof window.AudioEncoder !== 'undefined' &&
             const encodedChunks = [];
             const encoder = new AudioEncoder({
                 output: function(c) { encodedChunks.push(c); },
-                error: function(err) { done(err); }
+                error: function(err) {
+                    try { encoder.close(); } catch (_) {}
+                    done(err);
+                }
             });
             encoder.configure({
                 codec: 'opus',
@@ -246,6 +255,7 @@ const HAS_ENCODER = typeof window.AudioEncoder !== 'undefined' &&
             }
 
             encoder.flush().then(function() {
+                try { encoder.close(); } catch (_) {}
                 const dec = new WebCodecsOpus(1, {sampleRate: SR_OUT});
                 const pcmChunks = [];
                 dec.on('data', function(buf) { pcmChunks.push(buf); });
