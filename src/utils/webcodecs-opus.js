@@ -75,15 +75,15 @@ export default class WebCodecsOpus extends Event {
         this.nextTimestamp = 0;
         this.closed = false;
         this.rebuildAttempts = 0;
-        this.decoder = this._buildDecoder();
+        this.decoder = this.buildDecoder();
     }
 
-    _buildDecoder() {
+    buildDecoder() {
         let dec;
         try {
             dec = new AudioDecoder({
-                output: this._onAudioData.bind(this),
-                error: this._onError.bind(this)
+                output: this.onAudioData.bind(this),
+                error: this.onError.bind(this)
             });
             dec.configure({
                 codec: 'opus',
@@ -120,7 +120,7 @@ export default class WebCodecsOpus extends Event {
                 data: bytes
             });
         } catch (err) {
-            this._onError(err);
+            this.onError(err);
             return;
         }
         this.nextTimestamp += 60000; // 60ms in us, upper bound on an Opus frame
@@ -128,11 +128,11 @@ export default class WebCodecsOpus extends Event {
         try {
             this.decoder.decode(chunk);
         } catch (err) {
-            this._onError(err);
+            this.onError(err);
         }
     }
 
-    _onAudioData(audioData) {
+    onAudioData(audioData) {
         try {
             const numFrames = audioData.numberOfFrames;
             const numChannels = audioData.numberOfChannels;
@@ -171,13 +171,13 @@ export default class WebCodecsOpus extends Event {
                 this.dispatch('data', interleaved);
             }
         } catch (err) {
-            this._onError(err);
+            this.onError(err);
         } finally {
             audioData.close();
         }
     }
 
-    _onError(err) {
+    onError(err) {
         if (this.config.handleCorruptedStream) {
             this.dispatch('corrupted_stream', err);
         }
@@ -202,11 +202,11 @@ export default class WebCodecsOpus extends Event {
                 if (old.state !== 'closed') {
                     old.close();
                 }
-            } catch (_) {
-                // Decoder is already dead; ignore.
+            } catch {
+                // Decoder is already in an unrecoverable state; nothing to do.
             }
         }
-        this.decoder = this._buildDecoder();
+        this.decoder = this.buildDecoder();
     }
 
     destroy() {
@@ -241,15 +241,17 @@ export default class WebCodecsOpus extends Event {
                 if (dec.state !== 'closed') {
                     dec.close();
                 }
-            } catch (_) {
-                // Best-effort cleanup.
+            } catch {
+                // Decoder is already in an unrecoverable state; nothing to do.
             }
             this.offAll();
         };
         let flushed;
         try {
             flushed = dec.flush();
-        } catch (_) {
+        } catch {
+            // flush() rejects/throws if the decoder is already errored;
+            // skip straight to teardown.
             finalize();
             return;
         }
