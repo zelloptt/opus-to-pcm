@@ -25,13 +25,12 @@ import Event from './event.js';
 // WebCodecs' Opus decoder in Chromium only accepts `sampleRate: 48000`
 // in `AudioDecoderConfig` and always emits 48 kHz `AudioData`, even
 // though libopus itself supports returning decoded audio at 8, 12, 16,
-// 24 or 48 kHz via `opus_decoder_create(Fs, ...)`. The Zello Channels
-// SDK, however, derives the downstream player's sample rate from the
-// codec header attached to each stream and passes it in as
-// `options.sampleRate` (24 kHz for narrow-/mediumband streams, 48 kHz
-// for wideband). If we just forwarded the raw 48 kHz samples the
-// `OpusWorker` replacement would play back at half speed / an octave
-// low whenever the session picked 24 kHz.
+// 24 or 48 kHz via `opus_decoder_create(Fs, ...)`. Callers can request
+// a different output rate via `options.sampleRate` (typically driven
+// by codec metadata on the wire, e.g. 24 kHz for narrow-/mediumband
+// streams and 48 kHz for wideband). If we just forwarded the raw
+// 48 kHz samples a caller requesting 24 kHz would play back at half
+// speed / an octave low.
 //
 // To preserve drop-in behavior, we resample the WebCodecs output down
 // to `options.sampleRate` before emitting it and report that same rate
@@ -75,8 +74,9 @@ export default class WebCodecsOpus extends Event {
         super('webcodecs-opus');
         this.channels = channels || 1;
         this.config = config || {};
-        // Target output rate. Matches the rate the Zello Channels SDK's
-        // player was configured with for this stream.
+        // Target output rate requested by the caller via
+        // `options.sampleRate`; defaults to WebCodecs' native 48 kHz
+        // when unset.
         this.outputSampleRate = this.config.sampleRate || WEBCODECS_OPUS_RATE;
         // Monotonically-increasing timestamp in microseconds. WebCodecs
         // only requires input timestamps to be strictly increasing for
