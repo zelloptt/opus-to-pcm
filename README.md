@@ -19,6 +19,8 @@ Available options are:
 
 *fallback* - true/false. Whether it will use libopus as fallback or not. Default is true.
 
+*useNative* - true/false. Opt in to a native decoder path backed by the browser's [WebCodecs `AudioDecoder`](https://developer.mozilla.org/en-US/docs/Web/API/AudioDecoder) instead of the libopus-in-worker bundle. Default is false. When `useNative: true` is set on an environment that doesn't provide `AudioDecoder`, the decoder falls back to libopus iff `fallback: true`. Recommended for Chromium-based environments where `AudioDecoder` + `codec: 'opus'` is guaranteed by spec and avoids the ~900KB inlined worker bundle entirely.
+
 Decoder fire an event *decode* whenever it completes decoding. Usually it decodes several opus packet at a time for better performance although it need to be provided single opus packet into *decode* method.
 
 **Complete example:**
