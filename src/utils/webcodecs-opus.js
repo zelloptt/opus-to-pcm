@@ -81,7 +81,9 @@ export default class WebCodecsOpus extends Event {
         // Monotonically-increasing timestamp in microseconds. WebCodecs
         // only requires input timestamps to be strictly increasing for
         // ordering; the value is not inspected by us on the output side.
-        // A per-packet 60ms step is the upper bound on an Opus frame.
+        // A per-packet 120ms step is the upper bound on a spec-compliant
+        // Opus packet (RFC 6716 sec 3.1: a packet contains 1..48 frames
+        // of 2.5/5/10/20/40/60 ms summing to <= 120 ms).
         this.nextTimestamp = 0;
         this.closed = false;
         this.rebuildAttempts = 0;
@@ -192,7 +194,7 @@ export default class WebCodecsOpus extends Event {
             this.onError(err);
             return;
         }
-        this.nextTimestamp += 60000; // 60ms in us, upper bound on an Opus frame
+        this.nextTimestamp += 120000; // 120ms in us, max Opus packet duration (RFC 6716)
 
         try {
             this.decoder.decode(chunk);

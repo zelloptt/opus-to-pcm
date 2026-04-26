@@ -370,7 +370,7 @@ describe('WebCodecsOpus lifecycle --', function() {
             // counter doesn't reset on rebuild.
             const dec = new WebCodecsOpus(1, {sampleRate: 48000});
             const before = dec.nextTimestamp;
-            dec.decode(new Uint8Array([1])); // bumps to 60000
+            dec.decode(new Uint8Array([1])); // bumps by max packet duration
             fakes[0].fireError(new Error('boom')); // rebuild
             ok(dec.nextTimestamp > before);
         });
