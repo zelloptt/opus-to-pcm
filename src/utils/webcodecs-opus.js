@@ -51,6 +51,11 @@ import Event from './event.js';
 
 const WEBCODECS_OPUS_RATE = 48000;
 
+// Default channel count when the caller doesn't pass one. Mono is the
+// only mode `OpusToPCM` actually exercises today, but the constructor
+// argument is kept for parity with `OpusWorker(channels, config)`.
+const DEFAULT_CHANNELS = 1;
+
 // Maximum number of times we'll rebuild the underlying `AudioDecoder`
 // in response to errors before giving up on the stream. `AudioDecoder`
 // transitions to 'closed' on any decode error, so to match libopus's
@@ -69,10 +74,30 @@ const MAX_REBUILD_ATTEMPTS = 5;
 // than hardcoding it; not part of the public runtime API.
 export const FLUSH_TIMEOUT_MS = 1000;
 
+// Idempotent close for an `AudioDecoder` that may already be closed
+// or in an error state. `AudioDecoder.close()` throws if the decoder
+// has already transitioned out of a closeable state, so every site
+// that releases a decoder ends up needing the same state-check + try
+// /catch dance. Centralizing it keeps us from silently regressing the
+// "release the underlying media-process resource explicitly" rule one
+// of these sites at a time.
+function safeCloseDecoder(decoder) {
+    if (!decoder) {
+        return;
+    }
+    try {
+        if (decoder.state !== 'closed') {
+            decoder.close();
+        }
+    } catch (_) {
+        // Already in an unrecoverable state; nothing to do.
+    }
+}
+
 export default class WebCodecsOpus extends Event {
     constructor(channels, config) {
         super('webcodecs-opus');
-        this.channels = channels || 1;
+        this.channels = channels || DEFAULT_CHANNELS;
         this.config = config || {};
         // Target output rate requested by the caller via
         // `options.sampleRate`; defaults to WebCodecs' native 48 kHz
@@ -106,16 +131,7 @@ export default class WebCodecsOpus extends Event {
             // If `new AudioDecoder()` succeeded and `configure()` threw,
             // we own a partially-constructed decoder whose underlying
             // media-process resource would otherwise leak until GC.
-            // Release it explicitly, mirroring `closeDecoder()`.
-            if (dec) {
-                try {
-                    if (dec.state !== 'closed') {
-                        dec.close();
-                    }
-                } catch (_) {
-                    // Already in an unrecoverable state; nothing to do.
-                }
-            }
+            safeCloseDecoder(dec);
             if (this.config.handleCorruptedStream) {
                 this.safeDispatch('corrupted_stream', err);
             }
@@ -140,16 +156,7 @@ export default class WebCodecsOpus extends Event {
     closeDecoder() {
         const old = this.decoder;
         this.decoder = null;
-        if (!old) {
-            return;
-        }
-        try {
-            if (old.state !== 'closed') {
-                old.close();
-            }
-        } catch (_) {
-            // Decoder is already in an unrecoverable state; nothing to do.
-        }
+        safeCloseDecoder(old);
     }
 
     getSampleRate() {
@@ -324,13 +331,7 @@ export default class WebCodecsOpus extends Event {
                 clearTimeout(timeoutHandle);
                 timeoutHandle = null;
             }
-            try {
-                if (dec.state !== 'closed') {
-                    dec.close();
-                }
-            } catch (_) {
-                // Decoder is already in an unrecoverable state; nothing to do.
-            }
+            safeCloseDecoder(dec);
             this.offAll();
         };
         let flushed;
