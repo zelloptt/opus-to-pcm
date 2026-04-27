@@ -13,7 +13,7 @@ export class OpusToPCM extends Event {
         };
         options = Object.assign({}, defaults, options);
 
-        let nativeSupport = options.useNative &&
+        const nativeSupport = options.useNative &&
             typeof AudioDecoder !== 'undefined' &&
             typeof EncodedAudioChunk !== 'undefined';
 

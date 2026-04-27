@@ -166,6 +166,20 @@ describe('WebCodecsOpus lifecycle --', function() {
             equal(dec.getSampleRate(), 48000);
         });
 
+        it('coerces a malformed sampleRate to 48000', function() {
+            // A non-numeric or non-positive `sampleRate` would otherwise
+            // poison the `srcRate % dstRate === 0` decimation branch in
+            // `onAudioData`: `48000 % "abc"` and `48000 % undefined` are
+            // both `NaN`, which silently routes every packet through the
+            // linear-interpolation fallback. The constructor coerces
+            // bad input to the WebCodecs native rate so that branch is
+            // guaranteed to see a positive integer.
+            equal(new WebCodecsOpus(1, {sampleRate: 'abc'}).getSampleRate(), 48000);
+            equal(new WebCodecsOpus(1, {sampleRate: 0}).getSampleRate(), 48000);
+            equal(new WebCodecsOpus(1, {sampleRate: -1}).getSampleRate(), 48000);
+            equal(new WebCodecsOpus(1, {sampleRate: NaN}).getSampleRate(), 48000);
+        });
+
         it('survives a configure() that throws synchronously', function() {
             // Simulates "browser refuses our config" (e.g. a future
             // Chrome that drops Opus support, or a misconfigured

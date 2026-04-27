@@ -101,8 +101,16 @@ export default class WebCodecsOpus extends Event {
         this.config = config || {};
         // Target output rate requested by the caller via
         // `options.sampleRate`; defaults to WebCodecs' native 48 kHz
-        // when unset.
-        this.outputSampleRate = this.config.sampleRate || WEBCODECS_OPUS_RATE;
+        // when unset, malformed (string, NaN), or non-positive. The
+        // coercion matters because `onAudioData` does
+        // `srcRate % dstRate === 0` to pick the integer-decimation
+        // branch, and `48000 % "abc"` / `48000 % undefined` is `NaN`
+        // (`NaN === 0` is false), which would silently route every
+        // packet through the linear-interpolation fallback.
+        const requestedRate = Number(this.config.sampleRate);
+        this.outputSampleRate = Number.isFinite(requestedRate) && requestedRate > 0
+            ? requestedRate
+            : WEBCODECS_OPUS_RATE;
         // Monotonically-increasing timestamp in microseconds. WebCodecs
         // only requires input timestamps to be strictly increasing for
         // ordering; the value is not inspected by us on the output side.
